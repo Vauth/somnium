@@ -49,145 +49,169 @@ async function Raise(json_error, status_code) {
 // --------------------------------- //
 
 class Somnium {
+  static async loadConstants() {
+    let r1 = await fetch("https://dream.ai");
+    let r1Data = await r1.text();
+    const match = r1Data.match(/\/assets\/index-([A-Za-z0-9_-]+)\.js/);
+    if (!match) throw new Error("Could not find Vite bundle.");
+    let r2 = await fetch(`https://dream.ai/assets/index-${match[1]}.js`);
+    let r2Data = await r2.text();
+
+    const extract = (key) => {
+      const m = r2Data.match(new RegExp(`VITE_${key}:\`([^\`]+)\``));
+      return m ? m[1] : null;
+    };
+
+    return {
+      API_KEY:    extract("FIREBASE_API_KEY"),
+      APP_ID:     extract("FIREBASE_APP_ID"),
+      PROJECT_ID: extract("FIREBASE_PROJECT_ID"),
+    };
+  }
+
   static async GetHeader() {
-      let r1 = await fetch('https://dream.ai/create');
-      let r1Data = await r1.text();
-      const jsfile = (r1Data.match(/_app-(\w+)/) || [])[1];
-      let r2 = await fetch(`https://dream.ai/_next/static/chunks/pages/_app-${jsfile}.js`);
-      let r2Data = await r2.text();
-      let googlekey = (r2Data.match(/"(AI\w+)"/) || [])[1];
-      
-      let headers = {
-          "authority": "identitytoolkit.googleapis.com",
-          "accept": "*/*",
-          "accept-language": "ru,en;q=0.9",
+    const C = await this.loadConstants();
+
+    await fetch(
+      `https://firebaseinstallations.googleapis.com/v1/projects/${C.PROJECT_ID}/installations`,
+      {
+        method: "POST",
+        headers: {
+          "accept": "application/json",
           "content-type": "application/json",
           "origin": "https://dream.ai",
-          "sec-ch-ua": '"Chromium";v="110", "Not A(Brand";v="24", "YaBrowser";v="23"',
-          "sec-ch-ua-mobile": "?0",
-          "sec-ch-ua-platform": '"Windows"',
-          "sec-fetch-dest": "empty",
-          "sec-fetch-mode": "cors",
-          "sec-fetch-site": "cross-site",
-          "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36",
-          "x-client-version": "Chrome/JsCore/9.1.2/FirebaseCore-web",
-      };
-      
-      let params = { key: googlekey };
-      let data = { returnSecureToken: true };
-      
-      let url = new URL("https://identitytoolkit.googleapis.com/v1/accounts:signUp");
-      url.search = new URLSearchParams(params).toString();
-  
-      let response = await fetch(url, {
-          method: "POST",
-          headers: headers,
-          body: JSON.stringify(data),
-      });
-      let responseData = await response.json();
-      let TOKEN = responseData.idToken
-      
-      return {
-          "authority": "paint.api.wombo.ai",
-          "accept": "*/*",
-          "accept-language": "ru,en;q=0.9",
-          "authorization": `bearer ${TOKEN}`,
-          "content-type": "text/plain;charset=UTF-8",
-          "origin": "https://dream.ai",
-          "referer": "https://dream.ai/",
-          "sec-ch-ua": '"Chromium";v="110", "Not A(Brand";v="24", "YaBrowser";v="23"',
-          "sec-ch-ua-mobile": "?0",
-          "sec-ch-ua-platform": '"Windows"',
-          "sec-fetch-dest": "empty",
-          "sec-fetch-mode": "cors",
-          "sec-fetch-site": "cross-site",
-          "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 YaBrowser/23.3.1.895 Yowser/2.5 Safari/537.36",
-          "x-app-version": "WEB-2.0.0",
+          "x-goog-api-key": C.API_KEY,
+        },
+        body: JSON.stringify({
+          fid: "",
+          appId: C.APP_ID,
+          authVersion: "FIS_v2",
+          sdkVersion: "w:0.6.20",
+        }),
       }
+    );
+
+    let tokenRes = await fetch(
+      `https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=${C.API_KEY}`,
+      {
+        method: "POST",
+        headers: {
+          "accept": "*/*",
+          "content-type": "application/json",
+          "origin": "https://dream.ai",
+          "x-client-version": "Chrome/JsCore/9.1.2/FirebaseCore-web",
+          "user-agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
+        },
+        body: JSON.stringify({ returnSecureToken: true }),
+      }
+    );
+    let tokenData = await tokenRes.json();
+    const TOKEN = tokenData.idToken;
+
+    return {
+      "accept": "*/*",
+      "accept-language": "en-US,en;q=0.5",
+      "authorization": `Bearer ${TOKEN}`,
+      "content-type": "application/json",
+      "origin": "https://dream.ai",
+      "referer": "https://dream.ai/",
+      "sec-ch-ua": '"Chromium";v="148", "Brave";v="148", "Not/A)Brand";v="99"',
+      "sec-ch-ua-mobile": "?0",
+      "sec-ch-ua-platform": '"Linux"',
+      "sec-fetch-dest": "empty",
+      "sec-fetch-mode": "cors",
+      "sec-fetch-site": "same-site",
+      "sec-gpc": "1",
+      "service": "Dream",
+      "user-agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
+      "x-app-version": "WEB-7.0.4",
+      "x-os-version": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
+      "x-service": "Dream",
+    };
   }
 
   static async Generate(prompt, style) {
-      const { styles } = await this.Styles();
-      if (!styles.hasOwnProperty(style)) {
-          return { action: "error", status: 402 };
+    const { styles } = await this.Styles();
+    if (!styles.hasOwnProperty(style)) {
+      return { action: "error", status: 402 };
+    }
+
+    const headers = await this.GetHeader();
+    const customStyles = await this.CustomStyles();
+    const customIds = Object.fromEntries(
+      Object.entries(customStyles).map(([key, value]) => [parseInt(value['id']), key])
+    );
+
+    let textQ, styleQ;
+    if (Object.keys(customIds).includes(style.toString())) {
+      textQ = customStyles[customIds[style]]['prompt'].replace('{PROMPT}', prompt);
+      styleQ = parseInt(customStyles[customIds[style]]['style']);
+    } else {
+      textQ = prompt;
+      styleQ = style;
+    }
+
+    const data = {
+      "is_premium": false,
+      "input_spec": {
+        "prompt": textQ,
+        "style": styleQ,
+        "aspect_ratio": "ratio_9_16",
+        "gen_type": "NORMAL",
       }
+    };
 
-      const headers = await this.GetHeader();
-      const customStyles = await this.CustomStyles();
+    let genResponse = await fetch('https://api.dream.ai/api/v2/tasks/', {
+      method: 'POST',
+      headers: headers,
+      body: JSON.stringify(data),
+    });
+    genResponse = await genResponse.json();
 
-      const customIds = Object.fromEntries(Object.entries(customStyles).map(([key, value]) => [parseInt(value['id']), key]));
-
-      let textQ;
-      let styleQ;
-
-      if (Object.keys(customIds).includes(style.toString())) {
-          textQ = customStyles[customIds[style]]['prompt'].replace('{PROMPT}', prompt);
-          styleQ = parseInt(customStyles[customIds[style]]['style']);
-      } else {
-          textQ = prompt;
-          styleQ = style;
-      }
-
-      const data = {
-          "is_premium": false,
-          "input_spec": {
-              "prompt": textQ,
-              "style": styleQ,
-              "display_freq": 10
-          }
-      };
-
-      let genResponse = await fetch('https://paint.api.wombo.ai/api/v2/tasks', {
-          method: 'POST',
+    try {
+      const image_id = genResponse['id'];
+      for (let i = 0; i < 10; i++) {
+        let response = await fetch(`https://api.dream.ai/api/v2/tasks/${image_id}`, {
+          method: 'GET',
           headers: headers,
-          body: JSON.stringify(data),
-      });
-
-      genResponse = await genResponse.json();
-      try {
-          const image_id = genResponse['id'];
-          for (let i = 0; i < 10; i++) {
-              let response = await fetch(`https://paint.api.wombo.ai/api/v2/tasks/${image_id}`, {
-                  method: 'GET',
-                  headers: headers,
-              });
-              response = await response.json();
-              if (response['state'] == 'failed') {
-                  return ERROR_403;
-              }
-              await new Promise(r => setTimeout(r, 3000));
-              try {
-                  const img = response['result'];
-                  if (img != null) {
-                      return { action: "success", status: 200, image: img['final'] };
-                  } else {
-                      continue;
-                  }
-              } catch {
-                  continue;
-              }
+        });
+        response = await response.json();
+        if (response['state'] == 'failed') return ERROR_403;
+        await new Promise(r => setTimeout(r, 3000));
+        try {
+          const img = response['result'];
+          if (img != null) {
+            return { action: "success", status: 200, image: img['final'] };
+          } else {
+            continue;
           }
-      } catch (error) {
-          return ERROR_402;
+        } catch { continue; }
       }
+    } catch (error) {
+      return ERROR_402;
+    }
   }
 
   static async CustomStyles() {
-      const styles = await fetch('https://raw.githubusercontent.com/Vauth/custom/main/styles.json');
-      return await styles.json();
+    const styles = await fetch('https://raw.githubusercontent.com/Vauth/custom/main/styles.json');
+    return await styles.json();
   }
 
   static async DefaultStyles() {
-      const styles = await fetch("https://paint.api.wombo.ai/api/styles");
-      return await styles.json();
+    const styles = await fetch("https://api.dream.ai/api/styles/");
+    return await styles.json();
   }
 
   static async Styles() {
-      const Dstyles = await this.DefaultStyles();
-      const Cstyles = await this.CustomStyles();
-      const alls = Object.fromEntries(Object.entries(Cstyles).map(([key, value]) => [value['id'], { "name": key, "image": value['image'] }]));
-      Dstyles.forEach((style) => { if (!style.is_premium) { alls[style.id] = { "name": style['name'], "image": style['photo_url'] } } });
-      return { action: "success", status: 200, styles: alls };
+    const Dstyles = await this.DefaultStyles();
+    const Cstyles = await this.CustomStyles();
+    const alls = Object.fromEntries(
+      Object.entries(Cstyles).map(([key, value]) => [value['id'], { "name": key, "image": value['image'] }])
+    );
+    Dstyles.forEach((style) => {
+      if (!style.is_premium) { alls[style.id] = { "name": style['name'], "image": style['photo_url'] }; }
+    });
+    return { action: "success", status: 200, styles: alls };
   }
 }
 
