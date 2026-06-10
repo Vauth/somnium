@@ -7,6 +7,7 @@ const BOT_WEBHOOK = "/endpoint"; // Let it be as it is.
 const BOT_SECRET = "BOT_SECRET"; // Insert a powerful secret text (only [A-Z, a-z, 0-9, _, -] are allowed).
 const BOT_OWNER = 123456789; // Insert your telegram account id.
 const PUBLIC_BOT = false; // Make your bot public (only [true, false] are allowed).
+const EDIT_STYLE = 163; // Default edit style
 
 // ----------------------------------- //
 // ---------- Do Not Modify ---------- //
@@ -130,12 +131,46 @@ class Somnium {
     };
   }
 
-  static async Generate(prompt, style) {
-    const { styles } = await this.Styles();
-    if (!styles.hasOwnProperty(style)) {
-      return { action: "error", status: 402 };
-    }
+  static async Mediastore(headers, tg_file_id) {
+    const tgFile = await Telegram.getFile(tg_file_id);
+    const filePath = tgFile.result.file_path;
+    const mediaSuffix = "jpg";
 
+    const imgBytes = await Telegram.fetchFile(filePath);
+
+    const slotRes = await fetch("https://api.dream.ai/api/mediastore/", {
+      method: "POST",
+      headers: headers,
+      body: JSON.stringify({ num_uploads: 1, media_suffix: mediaSuffix }),
+    });
+    const slot = await slotRes.json();
+
+    await fetch(slot[0]["media_url"], {
+      method: "PUT",
+      body: imgBytes,
+      headers: {
+        "accept": "*/*",
+        "accept-language": "en-US,en;q=0.5",
+        "cache-control": "no-cache",
+        "content-type": `image/${mediaSuffix}`,
+        "origin": "https://dream.ai",
+        "pragma": "no-cache",
+        "referer": "https://dream.ai/",
+        "sec-ch-ua": '"Chromium";v="148", "Brave";v="148", "Not/A)Brand";v="99"',
+        "sec-ch-ua-mobile": "?0",
+        "sec-ch-ua-platform": '"Linux"',
+        "sec-fetch-dest": "empty",
+        "sec-fetch-mode": "cors",
+        "sec-fetch-site": "cross-site",
+        "sec-gpc": "1",
+        "user-agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
+      },
+    });
+
+    return slot[0];
+  }
+
+  static async Generate(prompt, style, tg_file_id = null, ratio = "ratio_9_16", weight = 0.5) {
     const headers = await this.GetHeader();
     const customStyles = await this.CustomStyles();
     const customIds = Object.fromEntries(
@@ -143,12 +178,12 @@ class Somnium {
     );
 
     let textQ, styleQ;
-    if (Object.keys(customIds).includes(style.toString())) {
-      textQ = customStyles[customIds[style]]['prompt'].replace('{PROMPT}', prompt);
-      styleQ = parseInt(customStyles[customIds[style]]['style']);
+    if (Object.keys(customIds).includes(parseInt(style).toString())) {
+      textQ = customStyles[customIds[parseInt(style)]]['prompt'].replace('{PROMPT}', prompt);
+      styleQ = parseInt(customStyles[customIds[parseInt(style)]]['style']);
     } else {
       textQ = prompt;
-      styleQ = style;
+      styleQ = parseInt(style);
     }
 
     const data = {
@@ -156,10 +191,22 @@ class Somnium {
       "input_spec": {
         "prompt": textQ,
         "style": styleQ,
-        "aspect_ratio": "ratio_9_16",
+        "aspect_ratio": ratio,
         "gen_type": "NORMAL",
       }
     };
+
+    if (tg_file_id) {
+      try {
+        const media = await this.Mediastore(headers, tg_file_id);
+        data["input_spec"]["input_image"] = {
+          "mediastore_id": media["id"],
+          "weight": weight,
+        };
+      } catch (e) {
+        return ERROR_402;
+      }
+    }
 
     let genResponse = await fetch('https://api.dream.ai/api/v2/tasks/', {
       method: 'POST',
@@ -190,6 +237,7 @@ class Somnium {
     } catch (error) {
       return ERROR_402;
     }
+    return ERROR_402;
   }
 
   static async CustomStyles() {
@@ -244,6 +292,18 @@ class Telegram {
     const response = await fetch(await this.apiUrl('getMe'))
     if (response.status == 200) {return (await response.json()).result;
     } else {return await response.json()}
+  }
+
+  static async getFile(file_id) {
+    const response = await fetch(await this.apiUrl('getFile', { file_id: file_id }))
+    if (response.status == 200) {return (await response.json());
+    } else {return await response.json()}
+  }
+
+  static async fetchFile(file_path) {
+    const response = await fetch(`https://api.telegram.org/file/bot${BOT_TOKEN}/${file_path}`)
+    if (response.status == 200) {return await response.arrayBuffer();
+    } else {return null}
   }
 
   static async sendMessage(chat_id, text, reply_id, reply_markup=[]) {
@@ -364,15 +424,34 @@ async function onMessage(event, message) {
   const user_fn = message.from.first_name
   const message_id = message.message_id
 
+  if (message.photo) {return null}
+  if (!PUBLIC_BOT && user_id != BOT_OWNER) {return null}
+
   if (message.text && message.text.startsWith("/start")) {
-    if (!PUBLIC_BOT && user_id != BOT_OWNER) {return await Unauthorized(chat_id, message_id)}
-    const text = `Hi [${user_fn}](tg://user?id=${user_id}) [‍](https://telegra.ph/file/64d470dfb6f5c386e53c2.jpg)!\nCreate beautiful artwork using the *power of AI*. Enter a prompt, pick an art style and watch Somnium turn your dream into an AI-powered painting in seconds.`
+    const text = `Hi [${user_fn}](tg://user?id=${user_id}) [‍](https://telegra.ph/file/64d470dfb6f5c386e53c2.jpg)!\nCreate beautiful artwork using the *power of AI*. Enter a prompt, pick an art style and watch Somnium turn your dream into an AI-powered painting in seconds.\n\n*How it works?*\n*• Generate:* \`/generate <prompt>\`\n*• Edit:* \`/edit <prompt> <reply-to-photo>\``
     const buttons = [[{ text: "Source Code", url: "https://github.com/vauth/somnium" }]];
     return await Telegram.sendMessage(chat_id, text, message_id, buttons)
   }
 
+  if (message.text && message.text.startsWith("/edit")) {
+    if (!message.reply_to_message || !message.reply_to_message.photo) {
+      return await Telegram.sendMessage(chat_id, "*⚠️ Please reply to a photo with /edit <prompt>.*", message_id)
+    }
+    const prompt = message.text.split('/edit ').slice(1).join('')
+    if (prompt == "") {return await Telegram.sendMessage(chat_id, "*⚠️ Please Give Me A Prompt.*", message_id)}
+    const photos = message.reply_to_message.photo
+    const tg_file_id = photos[photos.length - 1].file_id
+    const image = await Somnium.Generate(prompt, EDIT_STYLE, tg_file_id)
+    if (image.status == 200) {
+      const caption = `*🫐 Edit:* \`${prompt}\``
+      const buttons = [[{ text: "Source Code", url: "https://github.com/vauth/somnium" }]];
+      return await Telegram.sendDocument(chat_id, image.image, message_id, buttons, caption)
+    } else {
+      return await Telegram.sendMessage(chat_id, `❌ *${image.text}*`, message_id)
+    }
+  }
+
   if (message.text && message.text.startsWith("/generate")) {
-    if (!PUBLIC_BOT && user_id != BOT_OWNER) {return await Unauthorized(chat_id, message_id)}
     const prompt = message.text.split('/generate ').slice(1).join('')
     if (prompt == "") {return await Telegram.sendMessage(chat_id, "*⚠️ Please Give Me A Prompt.*", message_id)}
     const buttons = await createButton(0, "none", user_id)
@@ -380,21 +459,11 @@ async function onMessage(event, message) {
     return await Telegram.sendMessage(message.chat.id, text, message.message_id, buttons)
   } else {
     if (message.chat.id.toString().includes("-100")) {return}
-    if (!PUBLIC_BOT && user_id != BOT_OWNER) {return await Unauthorized(chat_id, message_id)}
     const prompt = message.text
     const buttons = await createButton(0, "none", user_id)
     const text = `*🫐 Dream: * \`${prompt}\`\n\n*🐈‍⬛ Choose The Style:*`
     return await Telegram.sendMessage(message.chat.id, text, message.message_id, buttons)
   }
-}
-
-// ------------------------------------- //
-// -------- Unauthorized Creator ------- // 
-// ------------------------------------- //
-
-async function Unauthorized(chat_id, message_id) {
-  const buttons = [[{ text: "Source Code", url: "https://github.com/vauth/somnium" }]];
-  return Telegram.sendMessage(chat_id, "*❌ Access forbidden.*\n📡 Deploy your own [somnium](https://github.com/vauth/somnium) bot.", message_id, buttons)
 }
 
 // ------------------------------------ //
