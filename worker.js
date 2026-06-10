@@ -214,6 +214,7 @@ class Somnium {
       body: JSON.stringify(data),
     });
     genResponse = await genResponse.json();
+    if (genResponse["state"] == "failed") return ERROR_403
 
     try {
       const image_id = genResponse['id'];
